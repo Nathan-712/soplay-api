@@ -1,19 +1,14 @@
 // api/upload.js
-import { put } from '@vercel/blob';
+const { put } = require('@vercel/blob');
 
-export const config = { 
-  api: { bodyParser: false } 
-};
-
-export default async function handler(req, res) {
-  // ✅ WAJIB: CORS Headers agar bisa diakses dari Edunav/LiveCodes
+module.exports = async function handler(req, res) {
+  // ✅ CORS Headers (WAJIB untuk akses dari Edunav/LiveCodes)
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  // ✅ Handle preflight request (browser cek izin dulu)
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    return res.status(204).end();
   }
 
   if (req.method !== 'POST') {
@@ -21,32 +16,76 @@ export default async function handler(req, res) {
   }
 
   try {
-    const formData = await req.formData();
-    const file = formData.get('file');
+    // 🔧 Manual parsing multipart/form-data (lebih stabil di Node.js)
+    const chunks = [];
+    for await (const chunk of req) {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    }
+    const buffer = Buffer.concat(chunks);
     
-    if (!file) {
-      return res.status(400).json({ error: 'File tidak ditemukan' });
+    const contentType = req.headers['content-type'] || '';
+    const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+    if (!boundaryMatch) {
+      return res.status(400).json({ error: 'Boundary tidak ditemukan' });
+    }
+    const boundary = boundaryMatch[1] || boundaryMatch[2];
+    const boundaryBuffer = Buffer.from(`--${boundary}`);
+
+    // Split buffer berdasarkan boundary
+    const parts = [];
+    let start = 0;
+    while (true) {
+      const idx = buffer.indexOf(boundaryBuffer, start);
+      if (idx === -1) break;
+      if (idx > start) parts.push(buffer.slice(start, idx));
+      start = idx + boundaryBuffer.length + 2;
     }
 
-    const title = formData.get('title') || file.name.replace(/\.[^/.]+$/, '');
-    const artist = formData.get('artist') || 'Unknown Artist';
-    const album = formData.get('album') || 'Unknown Album';
+    let fileBuffer = null, fileName = 'unknown.mp3', mimeType = 'audio/mpeg';
 
-    const blob = await put(`soplay/${Date.now()}-${file.name}`, file, {
+    // Cari bagian file dalam multipart
+    for (const part of parts) {
+      const headerEndIdx = part.indexOf(Buffer.from('\r\n\r\n'));
+      if (headerEndIdx === -1) continue;
+      const headerStr = part.slice(0, headerEndIdx).toString('utf-8');
+      
+      if (headerStr.includes('filename="')) {
+        const filenameMatch = headerStr.match(/filename="([^"]+)"/);
+        if (filenameMatch) fileName = filenameMatch[1];
+        const contentTypeMatch = headerStr.match(/Content-Type:\s*([^\r\n]+)/i);
+        if (contentTypeMatch) mimeType = contentTypeMatch[1].trim();
+        
+        let body = part.slice(headerEndIdx + 4);
+        if (body.length >= 2 && body[body.length - 2] === 13 && body[body.length - 1] === 10) {
+          body = body.slice(0, -2);
+        }
+        fileBuffer = body;
+      }
+    }
+
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return res.status(400).json({ error: 'File tidak ditemukan atau kosong' });
+    }
+
+    // Upload ke Vercel Blob
+    const blob = await put(`soplay/${Date.now()}-${fileName}`, fileBuffer, {
       access: 'public',
+      contentType: mimeType,
       addRandomSuffix: true,
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       url: blob.url,
-      title,
-      artist,
-      album,
-      size: file.size
+      title: fileName.replace(/\.[^/.]+$/, ''),
+      artist: 'Unknown Artist',
+      album: '-',
+      size: fileBuffer.length,
+      mimeType
     });
+
   } catch (error) {
     console.error('Upload Error:', error);
-    res.status(500).json({ error: 'Gagal upload: ' + error.message });
+    return res.status(500).json({ error: 'Gagal upload: ' + error.message });
   }
-}
+};

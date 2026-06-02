@@ -1,7 +1,7 @@
-// api/upload.js
+import Busboy from 'busboy';
 import { put } from '@vercel/blob';
 
-// Jangan gunakan Edge runtime! Biarkan default (Node.js)
+// Jangan pakai runtime: 'edge'! Biarkan default (Node.js Serverless)
 export const config = {
   api: {
     bodyParser: false,
@@ -9,7 +9,7 @@ export const config = {
 };
 
 export default async function handler(req, res) {
-  // CORS headers
+  // Izinkan LiveCodes & Edunav akses
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -22,83 +22,58 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  try {
-    // Parse FormData secara manual untuk Node.js
+  const bb = Busboy({ headers: req.headers });
+  
+  let fileBuffer = null;
+  let fileName = null;
+  let mimeType = null;
+  const fields = {};
+
+  bb.on('file', (name, file, info) => {
     const chunks = [];
-    for await (const chunk of req) {
-      chunks.push(chunk);
-    }
-    const buffer = Buffer.concat(chunks);
-    
-    // Parse multipart form data
-    const contentType = req.headers['content-type'] || '';
-    const boundary = contentType.split('boundary=')[1];
-    
-    if (!boundary) {
-      return res.status(400).json({ error: 'Invalid content-type' });
-    }
-
-    const formData = parseMultipart(buffer, boundary);
-    const file = formData.files.file;
-    const title = formData.fields.title || (file ? file.filename.replace(/\.[^/.]+$/, '') : 'Unknown');
-    const artist = formData.fields.artist || 'Unknown Artist';
-    const album = formData.fields.album || 'Unknown Album';
-
-    if (!file) {
-      return res.status(400).json({ error: 'File tidak ditemukan' });
-    }
-
-    // Upload ke Vercel Blob
-    const blob = await put(`soplay/${Date.now()}-${file.filename}`, file.buffer, {
-      access: 'public',
-      addRandomSuffix: true,
-      contentType: file.mimetype,
+    file.on('data', (data) => chunks.push(data));
+    file.on('end', () => {
+      fileBuffer = Buffer.concat(chunks);
+      fileName = info.filename;
+      mimeType = info.mimeType;
     });
+  });
 
-    return res.status(200).json({
-      success: true,
-      url: blob.url,
-      title,
-      artist,
-      album,
-      size: file.buffer.length,
-    });
+  bb.on('field', (name, val) => {
+    fields[name] = val;
+  });
 
-  } catch (error) {
-    console.error('Upload Error:', error);
-    return res.status(500).json({ error: 'Gagal upload: ' + error.message });
-  }
-}
+  bb.on('finish', async () => {
+    try {
+      if (!fileBuffer) {
+        return res.status(400).json({ error: 'File tidak ditemukan' });
+      }
 
-// Helper untuk parse multipart form data
-function parseMultipart(buffer, boundary) {
-  const result = { fields: {}, files: {} };
-  const boundaryString = `--${boundary}`;
-  const parts = buffer.toString('binary').split(boundaryString);
+      const title = fields.title || fileName.replace(/\.[^/.]+$/, '');
+      const artist = fields.artist || 'Unknown Artist';
+      const album = fields.album || 'Unknown Album';
 
-  for (const part of parts) {
-    if (part.trim() === '' || part.trim() === '--') continue;
+      // Upload ke Vercel Blob
+      const blob = await put(`soplay/${Date.now()}-${fileName}`, fileBuffer, {
+        access: 'public',
+        contentType: mimeType,
+        addRandomSuffix: true,
+      });
 
-    const [headers, ...bodyParts] = part.split('\r\n\r\n');
-    const body = bodyParts.join('\r\n\r\n').trim();
-
-    const dispositionMatch = headers.match(/content-disposition:.*?name="(.*?)"(?:; filename="(.*?)")?/i);
-    if (!dispositionMatch) continue;
-
-    const [, name, filename] = dispositionMatch;
-
-    if (filename) {
-      const contentType = headers.match(/content-type: (.*?)\r\n/i)?.[1] || 'application/octet-stream';
-      const fileBuffer = Buffer.from(body, 'binary');
-      result.files[name] = {
-        filename: filename.replace(/\r\n$/, ''),
-        mimetype: contentType,
-        buffer: fileBuffer,
-      };
-    } else {
-      result.fields[name] = body.replace(/\r\n$/, '');
+      return res.status(200).json({
+        success: true,
+        url: blob.url,
+        title,
+        artist,
+        album,
+        size: fileBuffer.length,
+      });
+    } catch (error) {
+      console.error('Upload Error:', error);
+      return res.status(500).json({ error: 'Gagal upload: ' + error.message });
     }
-  }
+  });
 
-  return result;
+  // Pipe request ke busboy
+  req.pipe(bb);
 }

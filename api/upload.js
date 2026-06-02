@@ -6,12 +6,12 @@ export const config = {
 };
 
 export default async function handler(req, res) {
-  // ✅ WAJIB: Tambahkan CORS Headers agar bisa diakses dari Edunav/LiveCodes
+  // ✅ WAJIB: CORS Headers agar bisa diakses dari Edunav/LiveCodes
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  // ✅ Handle preflight request (OPTIONS)
+  // ✅ Handle preflight request (browser cek izin dulu)
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -23,11 +23,14 @@ export default async function handler(req, res) {
   try {
     const formData = await req.formData();
     const file = formData.get('file');
+    
+    if (!file) {
+      return res.status(400).json({ error: 'File tidak ditemukan' });
+    }
+
     const title = formData.get('title') || file.name.replace(/\.[^/.]+$/, '');
     const artist = formData.get('artist') || 'Unknown Artist';
     const album = formData.get('album') || 'Unknown Album';
-
-    if (!file) return res.status(400).json({ error: 'File tidak ditemukan' });
 
     const blob = await put(`soplay/${Date.now()}-${file.name}`, file, {
       access: 'public',
@@ -44,6 +47,6 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error('Upload Error:', error);
-    res.status(500).json({ error: 'Gagal upload ke storage: ' + error.message });
+    res.status(500).json({ error: 'Gagal upload: ' + error.message });
   }
 }

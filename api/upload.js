@@ -1,9 +1,7 @@
 const { put } = require('@vercel/blob');
-const formidable = require('formidable');
-const fs = require('fs');
 
 module.exports = async function handler(req, res) {
-  // Izinkan akses dari mana saja (LiveCodes / Edunav)
+  // Izinkan akses dari Edunav / LiveCodes
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -11,32 +9,60 @@ module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const form = formidable();
-
-  form.parse(req, async (err, fields, files) => {
-    if (err) return res.status(500).json({ error: 'Gagal memproses form' });
-
-    // Ambil file pertama
-    const file = Array.isArray(files.file) ? files.file[0] : files.file;
-    if (!file) return res.status(400).json({ error: 'File tidak ditemukan' });
-
-    try {
-      // Upload ke Vercel Blob
-      const blob = await put(`soplay/${Date.now()}-${file.originalFilename}`, fs.createReadStream(file.filepath), {
-        access: 'public',
-        addRandomSuffix: true,
-      });
-
-      const title = fields.title ? (Array.isArray(fields.title) ? fields.title[0] : fields.title) : file.originalFilename;
-
-      res.status(200).json({
-        success: true,
-        url: blob.url,
-        title: title,
-        size: file.size
-      });
-    } catch (error) {
-      res.status(500).json({ error: 'Gagal upload: ' + error.message });
+  try {
+    // 1. Baca raw body dari request Node.js secara manual
+    const chunks = [];
+    for await (const chunk of req) {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
     }
-  });
+    const buffer = Buffer.concat(chunks);
+
+    // 2. Ambil boundary untuk memisah file
+    const contentType = req.headers['content-type'] || '';
+    const boundary = contentType.split('boundary=')[1];
+    if (!boundary) return res.status(400).json({ error: 'Invalid request' });
+
+    // 3. Parse file secara manual (tanpa formidable/busboy)
+    const parts = buffer.toString('binary').split(`--${boundary}`);
+    let fileBuffer = null;
+    let fileName = 'unknown.mp3';
+    let mimeType = 'audio/mpeg';
+
+    for (const part of parts) {
+      if (part.includes('filename="')) {
+        const headerEnd = part.indexOf('\r\n\r\n');
+        const headerStr = part.substring(0, headerEnd);
+        let bodyStr = part.substring(headerEnd + 4);
+
+        const filenameMatch = headerStr.match(/filename="([^"]+)"/);
+        if (filenameMatch) fileName = filenameMatch[1];
+
+        const contentTypeMatch = headerStr.match(/Content-Type: ([^\r\n]+)/i);
+        if (contentTypeMatch) mimeType = contentTypeMatch[1].trim();
+
+        if (bodyStr.endsWith('\r\n')) bodyStr = bodyStr.slice(0, -2);
+        fileBuffer = Buffer.from(bodyStr, 'binary');
+      }
+    }
+
+    if (!fileBuffer) return res.status(400).json({ error: 'File tidak ditemukan' });
+
+    // 4. Upload ke Vercel Blob
+    const blob = await put(`soplay/${Date.now()}-${fileName}`, fileBuffer, {
+      access: 'public',
+      contentType: mimeType,
+      addRandomSuffix: true,
+    });
+
+    return res.status(200).json({
+      success: true,
+      url: blob.url,
+      title: fileName.replace(/\.[^/.]+$/, ''),
+      size: fileBuffer.length,
+    });
+
+  } catch (error) {
+    console.error('Error:', error);
+    return res.status(500).json({ error: 'Gagal upload: ' + error.message });
+  }
 };

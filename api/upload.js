@@ -1,46 +1,75 @@
+// api/upload.js
 import { put } from '@vercel/blob';
 
-export const config = { api: { bodyParser: false } };
+// Gunakan Edge runtime agar req.formData() berfungsi secara native
+export const config = {
+  runtime: 'edge',
+};
 
-export default async function handler(req, res) {
-  // Izinkan akses dari LiveCodes dan domain lain
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-  // Handle preflight request
+export default async function handler(req) {
+  // Handle preflight CORS request
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    return new Response(null, { 
+      status: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      }
+    });
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), { 
+      status: 405,
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+    });
   }
 
   try {
+    // Di Edge runtime, req adalah objek Request standar web API
     const formData = await req.formData();
     const file = formData.get('file');
-    const title = formData.get('title') || file.name.replace(/\.[^/.]+$/, '');
+    const title = formData.get('title') || (file ? file.name.replace(/\.[^/.]+$/, '') : 'Unknown');
     const artist = formData.get('artist') || 'Unknown Artist';
     const album = formData.get('album') || 'Unknown Album';
 
-    if (!file) return res.status(400).json({ error: 'File tidak ditemukan' });
+    if (!file) {
+      return new Response(JSON.stringify({ error: 'File tidak ditemukan' }), { 
+        status: 400,
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+      });
+    }
 
+    // Upload ke Vercel Blob (Public)
     const blob = await put(`soplay/${Date.now()}-${file.name}`, file, {
       access: 'public',
       addRandomSuffix: true,
     });
 
-    res.status(200).json({
+    return new Response(JSON.stringify({
       success: true,
       url: blob.url,
       title,
       artist,
       album,
       size: file.size
+    }), {
+      status: 200,
+      headers: { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      }
     });
+
   } catch (error) {
     console.error('Upload Error:', error);
-    res.status(500).json({ error: 'Gagal upload: ' + error.message });
+    return new Response(JSON.stringify({ error: 'Gagal upload ke storage: ' + error.message }), { 
+      status: 500,
+      headers: { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      }
+    });
   }
 }

@@ -1,13 +1,18 @@
-const { put } = require('@vercel/blob');
+import { put } from '@vercel/blob';
 
-module.exports = async function handler(req, res) {
-  // 1. Izinkan CORS untuk LiveCodes & Edunav
+export const config = { 
+  api: { bodyParser: false } 
+};
+
+export default async function handler(req, res) {
+  // --- WAJIB: Tambahkan CORS Headers agar LiveCodes/Edunav boleh akses ---
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
+  // Jika browser mengecek izin (preflight OPTIONS), langsung izinkan
   if (req.method === 'OPTIONS') {
-    return res.status(204).end(); // Penting untuk preflight CORS
+    return res.status(204).end();
   }
 
   if (req.method !== 'POST') {
@@ -15,59 +20,31 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    // 2. Baca raw buffer dari request
-    const chunks = [];
-    for await (const chunk of req) {
-      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-    }
-    const buffer = Buffer.concat(chunks);
-    const contentType = req.headers['content-type'] || '';
-    const boundary = contentType.split('boundary=')[1];
+    // Parse file secara native (Node.js 18+ di Vercel mendukung ini)
+    const formData = await req.formData();
+    const file = formData.get('file');
+    const title = formData.get('title') || (file ? file.name.replace(/\.[^/.]+$/, '') : 'Unknown');
+    const artist = formData.get('artist') || 'Unknown Artist';
+    const album = formData.get('album') || 'Unknown Album';
 
-    if (!boundary) return res.status(400).json({ error: 'Invalid boundary' });
+    if (!file) return res.status(400).json({ error: 'File tidak ditemukan' });
 
-    // 3. Parse multipart secara aman menggunakan Buffer
-    const boundaryBuffer = Buffer.from(`--${boundary}`);
-    const parts = [];
-    let start = 0;
-    
-    // Cari setiap bagian berdasarkan boundary
-    while (true) {
-      const idx = buffer.indexOf(boundaryBuffer, start);
-      if (idx === -1) break;
-      if (idx > start) {
-        parts.push(buffer.slice(start, idx));
-      }
-      start = idx + boundaryBuffer.length + 2; // +2 untuk \r\n
-    }
+    // Upload ke Vercel Blob (Public)
+    const blob = await put(`soplay/${Date.now()}-${file.name}`, file, {
+      access: 'public',
+      addRandomSuffix: true,
+    });
 
-    let fileBuffer = null;
-    let fileName = 'unknown.mp3';
-    let mimeType = 'audio/mpeg';
-
-    // 4. Ekstrak file dari parts
-    for (const part of parts) {
-      const headerEnd = part.indexOf('\r\n\r\n');
-      if (headerEnd === -1) continue;
-
-      const headerStr = part.slice(0, headerEnd).toString('utf-8');
-      
-      if (headerStr.includes('filename="')) {
-        const filenameMatch = headerStr.match(/filename="([^"]+)"/);
-        if (filenameMatch) fileName = filenameMatch[1];
-
-        const contentTypeMatch = headerStr.match(/Content-Type: ([^\r\n]+)/i);
-        if (contentTypeMatch) mimeType = contentTypeMatch[1].trim();
-
-        // Ambil body (data file), hapus 2 byte terakhir (\r\n)
-        const body = part.slice(headerEnd + 4);
-        fileBuffer = body.slice(0, body.length - 2); 
-      }
-    }
-
-    if (!fileBuffer) {
-      return res.status(400).json({ error: 'File tidak ditemukan' });
-    }
-
-    // 5. Upload ke Vercel Blob
-    const blob = await put(`soplay/${Date.now()}-${fileName
+    res.status(200).json({
+      success: true,
+      url: blob.url,
+      title,
+      artist,
+      album,
+      size: file.size
+    });
+  } catch (error) {
+    console.error('Upload Error:', error);
+    res.status(500).json({ error: 'Gagal upload ke storage: ' + error.message });
+  }
+}

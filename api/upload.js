@@ -1,10 +1,10 @@
 // api/upload.js
 import { put } from '@vercel/blob';
 
-// Gunakan Node.js runtime (default), BUKAN edge
+// Jangan gunakan Edge runtime! Biarkan default (Node.js)
 export const config = {
   api: {
-    bodyParser: false, // Kita handle manual
+    bodyParser: false,
   },
 };
 
@@ -23,14 +23,14 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Parse multipart form data secara manual
+    // Parse FormData secara manual untuk Node.js
     const chunks = [];
     for await (const chunk of req) {
       chunks.push(chunk);
     }
     const buffer = Buffer.concat(chunks);
     
-    // Ambil boundary dari content-type
+    // Parse multipart form data
     const contentType = req.headers['content-type'] || '';
     const boundary = contentType.split('boundary=')[1];
     
@@ -38,7 +38,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Invalid content-type' });
     }
 
-    // Parse form data sederhana
     const formData = parseMultipart(buffer, boundary);
     const file = formData.files.file;
     const title = formData.fields.title || (file ? file.filename.replace(/\.[^/.]+$/, '') : 'Unknown');
@@ -71,7 +70,7 @@ export default async function handler(req, res) {
   }
 }
 
-// Helper function untuk parse multipart form data
+// Helper untuk parse multipart form data
 function parseMultipart(buffer, boundary) {
   const result = { fields: {}, files: {} };
   const boundaryString = `--${boundary}`;
@@ -83,14 +82,12 @@ function parseMultipart(buffer, boundary) {
     const [headers, ...bodyParts] = part.split('\r\n\r\n');
     const body = bodyParts.join('\r\n\r\n').trim();
 
-    // Parse content-disposition header
     const dispositionMatch = headers.match(/content-disposition:.*?name="(.*?)"(?:; filename="(.*?)")?/i);
     if (!dispositionMatch) continue;
 
     const [, name, filename] = dispositionMatch;
 
     if (filename) {
-      // Ini file
       const contentType = headers.match(/content-type: (.*?)\r\n/i)?.[1] || 'application/octet-stream';
       const fileBuffer = Buffer.from(body, 'binary');
       result.files[name] = {
@@ -99,7 +96,6 @@ function parseMultipart(buffer, boundary) {
         buffer: fileBuffer,
       };
     } else {
-      // Ini field biasa
       result.fields[name] = body.replace(/\r\n$/, '');
     }
   }

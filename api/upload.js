@@ -3,10 +3,10 @@ import { put } from '@vercel/blob';
 export const config = { api: { bodyParser: false } };
 
 export default async function handler(req, res) {
-  // --- PENTING: Izinkan akses dari domain lain (Edunav) ---
+  // Izinkan akses dari LiveCodes dan domain lain
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   // Handle preflight request
   if (req.method === 'OPTIONS') {
@@ -26,7 +26,6 @@ export default async function handler(req, res) {
 
     if (!file) return res.status(400).json({ error: 'File tidak ditemukan' });
 
-    // Upload ke Vercel Blob (Public)
     const blob = await put(`soplay/${Date.now()}-${file.name}`, file, {
       access: 'public',
       addRandomSuffix: true,
@@ -42,6 +41,6 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error('Upload Error:', error);
-    res.status(500).json({ error: 'Gagal upload ke storage: ' + error.message });
+    res.status(500).json({ error: 'Gagal upload: ' + error.message });
   }
 }

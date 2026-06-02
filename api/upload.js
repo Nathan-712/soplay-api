@@ -1,8 +1,9 @@
-const Busboy = require('busboy');
 const { put } = require('@vercel/blob');
+const formidable = require('formidable');
+const fs = require('fs');
 
-module.exports = async function handler(req, res) {
-  // Izinkan akses dari LiveCodes & Edunav
+module.exports = function handler(req, res) {
+  // Izinkan akses dari LiveCodes & Edunav (CORS)
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -15,54 +16,41 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const bb = Busboy({ headers: req.headers });
-  let fileBuffer = null;
-  let fileName = null;
-  let mimeType = null;
-  const fields = {};
+  // Gunakan formidable untuk memproses file upload di Node.js
+  const form = formidable({ keepExtensions: true });
 
-  bb.on('file', (name, file, info) => {
-    const chunks = [];
-    file.on('data', (data) => chunks.push(data));
-    file.on('end', () => {
-      fileBuffer = Buffer.concat(chunks);
-      fileName = info.filename;
-      mimeType = info.mimeType;
-    });
-  });
+  form.parse(req, async (err, fields, files) => {
+    if (err) {
+      console.error('Formidable error:', err);
+      return res.status(500).json({ error: 'Gagal memproses form upload' });
+    }
 
-  bb.on('field', (name, val) => {
-    fields[name] = val;
-  });
+    // Formidable v2+ mengembalikan array, jadi kita ambil elemen pertama
+    const file = Array.isArray(files.file) ? files.file[0] : files.file;
+    const title = Array.isArray(fields.title) ? fields.title[0] : (fields.title || (file ? file.originalFilename.replace(/\.[^/.]+$/, '') : 'Unknown'));
+    const artist = Array.isArray(fields.artist) ? fields.artist[0] : (fields.artist || 'Unknown Artist');
 
-  bb.on('finish', async () => {
+    if (!file) {
+      return res.status(400).json({ error: 'File tidak ditemukan' });
+    }
+
     try {
-      if (!fileBuffer) {
-        return res.status(400).json({ error: 'File tidak ditemukan' });
-      }
-
-      const title = fields.title || fileName.replace(/\.[^/.]+$/, '');
-      const artist = fields.artist || 'Unknown Artist';
-
-      // Upload ke Vercel Blob
-      const blob = await put(`soplay/${Date.now()}-${fileName}`, fileBuffer, {
+      // Upload ke Vercel Blob menggunakan stream dari file sementara
+      const blob = await put(`soplay/${Date.now()}-${file.originalFilename}`, fs.createReadStream(file.filepath), {
         access: 'public',
-        contentType: mimeType,
         addRandomSuffix: true,
       });
 
-      return res.status(200).json({
+      res.status(200).json({
         success: true,
         url: blob.url,
-        title,
-        artist,
-        size: fileBuffer.length,
+        title: title,
+        artist: artist,
+        size: file.size,
       });
     } catch (error) {
-      console.error(error);
-      return res.status(500).json({ error: 'Gagal upload: ' + error.message });
+      console.error('Blob upload error:', error);
+      res.status(500).json({ error: 'Gagal upload ke storage: ' + error.message });
     }
   });
-
-  req.pipe(bb);
 };

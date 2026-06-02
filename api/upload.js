@@ -1,53 +1,51 @@
-import Busboy from 'busboy';
 import { put } from '@vercel/blob';
 
 export const config = {
-  api: { bodyParser: false },
+  api: {
+    bodyParser: false,
+  },
 };
 
-export default function handler(req, res) {
+export default async function handler(req, res) {
+  // CORS untuk LiveCodes & Edunav
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
-  const bb = Busboy({ headers: req.headers });
-  let fileBuffer = null, fileName = null, mimeType = null;
-  const fields = {};
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
-  bb.on('file', (name, file, info) => {
-    const chunks = [];
-    file.on('data', (data) => chunks.push(data));
-    file.on('end', () => {
-      fileBuffer = Buffer.concat(chunks);
-      fileName = info.filename;
-      mimeType = info.mimeType;
-    });
-  });
+  try {
+    const formData = await req.formData();
+    const file = formData.get('file');
+    const title = formData.get('title') || file.name.replace(/\.[^/.]+$/, '');
+    const artist = formData.get('artist') || 'Unknown Artist';
+    const album = formData.get('album') || 'Unknown Album';
 
-  bb.on('field', (name, val) => { fields[name] = val; });
-
-  bb.on('finish', async () => {
-    try {
-      if (!fileBuffer) return res.status(400).json({ error: 'File tidak ditemukan' });
-
-      const title = fields.title || fileName.replace(/\.[^/.]+$/, '');
-      const artist = fields.artist || 'Unknown Artist';
-      const album = fields.album || 'Unknown Album';
-
-      const blob = await put(`soplay/${Date.now()}-${fileName}`, fileBuffer, {
-        access: 'public',
-        contentType: mimeType,
-        addRandomSuffix: true,
-      });
-
-      res.status(200).json({ success: true, url: blob.url, title, artist, album, size: fileBuffer.length });
-    } catch (error) {
-      res.status(500).json({ error: 'Gagal upload: ' + error.message });
+    if (!file) {
+      return res.status(400).json({ error: 'File tidak ditemukan' });
     }
-  });
 
-  req.pipe(bb);
+    const blob = await put(`soplay/${Date.now()}-${file.name}`, file, {
+      access: 'public',
+      addRandomSuffix: true,
+    });
+
+    res.status(200).json({
+      success: true,
+      url: blob.url,
+      title,
+      artist,
+      album,
+      size: file.size,
+    });
+  } catch (error) {
+    console.error('Upload Error:', error);
+    res.status(500).json({ error: 'Gagal upload: ' + error.message });
+  }
 }

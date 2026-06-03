@@ -62,9 +62,12 @@ module.exports = async function handler(req, res) {
 
       catalog.lastUpdated = Date.now();
 
-      await put('katalog/global_catalog.json', JSON.stringify(catalog, null, 2), {
-        access: 'public', contentType: 'application/json'
-      });
+      // api/catalog.js - Bagian POST handler
+await put('katalog/global_catalog.json', JSON.stringify(catalog, null, 2), {
+  access: 'public',
+  contentType: 'application/json',
+  addRandomSuffix: false,  // ✅ PENTING: Agar URL tetap predictable
+});
 
       return res.status(200).json({ success: true, total: catalog.songs.length, lastUpdated: catalog.lastUpdated });
     } catch (error) {

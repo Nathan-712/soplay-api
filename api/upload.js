@@ -2,7 +2,6 @@
 const { put } = require('@vercel/blob');
 
 module.exports = async function handler(req, res) {
-  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -10,7 +9,6 @@ module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    // Manual parsing multipart
     const chunks = [];
     for await (const chunk of req) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
     const buffer = Buffer.concat(chunks);
@@ -53,7 +51,6 @@ module.exports = async function handler(req, res) {
       access: 'public', contentType: mimeType, addRandomSuffix: true
     });
 
-    // ✅ Response HANYA data file, tidak ada logika katalog
     return res.status(200).json({
       success: true,
       url: blob.url,

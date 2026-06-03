@@ -1,7 +1,6 @@
 // api/catalog.js
 const { put } = require('@vercel/blob');
 
-// Ganti dengan URL Blob Publik kamu
 const CATALOG_JSON_URL = 'https://gf9ktt57jkxqawtd.public.blob.vercel-storage.com/katalog/global_catalog.json';
 
 module.exports = async function handler(req, res) {
@@ -10,7 +9,7 @@ module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(204).end();
 
-  // GET: Incremental sync & cache validation
+  // GET: Incremental sync
   if (req.method === 'GET') {
     try {
       const url = new URL(req.url, `https://${req.headers.host}`);
@@ -36,7 +35,7 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  // POST: Register track to catalog
+  // POST: Tambah lagu ke katalog
   if (req.method === 'POST') {
     try {
       const { title, artist, album, url, size, mimeType, img, duration } = req.body;
@@ -62,12 +61,12 @@ module.exports = async function handler(req, res) {
 
       catalog.lastUpdated = Date.now();
 
-      // api/catalog.js - Bagian POST handler
-await put('katalog/global_catalog.json', JSON.stringify(catalog, null, 2), {
-  access: 'public',
-  contentType: 'application/json',
-  addRandomSuffix: false,  // ✅ PENTING: Agar URL tetap predictable
-});
+      // ✅ PENTING: addRandomSuffix: false agar URL tetap predictable
+      await put('katalog/global_catalog.json', JSON.stringify(catalog, null, 2), {
+        access: 'public',
+        contentType: 'application/json',
+        addRandomSuffix: false,
+      });
 
       return res.status(200).json({ success: true, total: catalog.songs.length, lastUpdated: catalog.lastUpdated });
     } catch (error) {

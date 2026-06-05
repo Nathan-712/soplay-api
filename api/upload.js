@@ -1,3 +1,4 @@
+// api/upload.js
 const { put } = require('@vercel/blob');
 
 module.exports = async function handler(req, res) {
@@ -11,12 +12,14 @@ module.exports = async function handler(req, res) {
     const chunks = [];
     for await (const chunk of req) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
     const buffer = Buffer.concat(chunks);
+    
     const contentType = req.headers['content-type'] || '';
     const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
     if (!boundaryMatch) return res.status(400).json({ error: 'Boundary tidak ditemukan' });
-
+    
     const boundary = boundaryMatch[1] || boundaryMatch[2];
     const boundaryBuffer = Buffer.from(`--${boundary}`);
+    
     const parts = [];
     let start = 0;
     while (true) {
@@ -41,6 +44,7 @@ module.exports = async function handler(req, res) {
         fileBuffer = body;
       }
     }
+
     if (!fileBuffer || fileBuffer.length === 0) return res.status(400).json({ error: 'File tidak ditemukan' });
 
     const blob = await put(`soplay/${Date.now()}-${fileName}`, fileBuffer, {
@@ -48,8 +52,13 @@ module.exports = async function handler(req, res) {
     });
 
     return res.status(200).json({
-      success: true, url: blob.url, title: fileName.replace(/\.[^/.]+$/, ''),
-      artist: 'Unknown Artist', album: '-', size: fileBuffer.length, mimeType
+      success: true,
+      url: blob.url,
+      title: fileName.replace(/\.[^/.]+$/, ''),
+      artist: 'Unknown Artist',
+      album: '-',
+      size: fileBuffer.length,
+      mimeType
     });
   } catch (error) {
     console.error('Upload Error:', error);

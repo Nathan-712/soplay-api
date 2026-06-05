@@ -1,56 +1,58 @@
 // api/catalog.js
-const { put } = require('@vercel/blob');
-
-const CATALOG_JSON_URL = 'https://gf9ktt57jkxqawtd.public.blob.vercel-storage.com/katalog/global_catalog.json';
+const GIST_ID = process.env.GIST_ID;
+const GIST_TOKEN = process.env.GIST_TOKEN;
+const GIST_API_URL = `https://api.github.com/gists/${GIST_ID}`;
+const FILENAME = 'soplay-catalog.json';
 
 module.exports = async function handler(req, res) {
+  // ✅ CORS & CDN Cache Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+
   if (req.method === 'OPTIONS') return res.status(204).end();
 
-  // GET: Incremental sync
+  // ================= GET (Read Catalog) =================
   if (req.method === 'GET') {
     try {
-      const url = new URL(req.url, `https://${req.headers.host}`);
-      const since = parseInt(url.searchParams.get('since')) || 0;
+      const headers = { 'Authorization': `token ${GIST_TOKEN}` };
+      if (req.headers['if-none-match']) headers['If-None-Match'] = req.headers['if-none-match'];
 
-      const r = await fetch(CATALOG_JSON_URL + '?t=' + Date.now());
-      if (!r.ok) return res.status(200).json({ songs: [], lastUpdated: 0, changed: false });
-      
-      const data = await r.json();
-      const lastUpdated = data.lastUpdated || 0;
-      
-      if (lastUpdated <= since) {
-        return res.status(200).json({ songs: [], lastUpdated, changed: false });
-      }
+      const gistRes = await fetch(GIST_API_URL, { headers });
 
-      return res.status(200).json({ 
-        songs: data.songs || [], 
-        lastUpdated, 
-        changed: true 
-      });
+      // 🟢 304 Not Modified (Hemat 100% Token & Bandwidth)
+      if (gistRes.status === 304) return res.status(304).end();
+      if (!gistRes.ok) throw new Error('Gist fetch failed');
+
+      const data = await gistRes.json();
+      const etag = gistRes.headers.get('ETag');
+      if (etag) res.setHeader('ETag', etag);
+
+      return res.status(200).json(JSON.parse(data.files[FILENAME].content));
     } catch (e) {
-      return res.status(200).json({ songs: [], lastUpdated: 0, changed: false });
+      console.error('Gist GET error:', e);
+      return res.status(200).json({ songs: [], lastUpdated: 0 });
     }
   }
 
-  // POST: Tambah lagu ke katalog
+  // ================= POST (Update Catalog) =================
   if (req.method === 'POST') {
     try {
       const { title, artist, album, url, size, mimeType, img, duration } = req.body;
       if (!title || !url) return res.status(400).json({ error: 'Title dan URL wajib' });
 
-      let catalog = { songs: [], lastUpdated: 0 };
-      try {
-        const r = await fetch(CATALOG_JSON_URL + '?t=' + Date.now());
-        if (r.ok) catalog = await r.json();
-      } catch (e) {}
+      // 1. Fetch katalog existing
+      const gistRes = await fetch(GIST_API_URL, { headers: { 'Authorization': `token ${GIST_TOKEN}` } });
+      const gistData = await gistRes.json();
+      const catalog = JSON.parse(gistData.files[FILENAME].content);
 
+      // 2. Cek duplikasi berdasarkan URL
       if (catalog.songs.some(s => s.url === url)) {
         return res.status(200).json({ success: true, message: 'Sudah ada di katalog' });
       }
 
+      // 3. Tambah lagu baru
       catalog.songs.push({
         id: `pub_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
         title, artist: artist || 'Unknown Artist', album: album || '-',
@@ -61,16 +63,20 @@ module.exports = async function handler(req, res) {
 
       catalog.lastUpdated = Date.now();
 
-      // ✅ PENTING: addRandomSuffix: false agar URL tetap predictable
-      await put('katalog/global_catalog.json', JSON.stringify(catalog, null, 2), {
-        access: 'public',
-        contentType: 'application/json',
-        addRandomSuffix: false,
+      // 4. Update Gist via API
+      const patchRes = await fetch(GIST_API_URL, {
+        method: 'PATCH',
+        headers: { 'Authorization': `token ${GIST_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: { [FILENAME]: { content: JSON.stringify(catalog, null, 2) } } })
       });
 
+      if (!patchRes.ok) throw new Error('Gist update failed');
+
+      // 5. Invalidate CDN cache agar polling berikutnya dapat data segar
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       return res.status(200).json({ success: true, total: catalog.songs.length, lastUpdated: catalog.lastUpdated });
     } catch (error) {
-      console.error('Catalog Error:', error);
+      console.error('Gist POST error:', error);
       return res.status(500).json({ error: 'Gagal update katalog: ' + error.message });
     }
   }

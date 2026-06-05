@@ -8,12 +8,10 @@ module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  // Cache 60 detik, stale 5 menit
   res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
   
   if (req.method === 'OPTIONS') return res.status(204).end();
 
-  // ================= GET (Read Playlists) =================
   if (req.method === 'GET') {
     try {
       const headers = { 'Authorization': `token ${GIST_TOKEN}` };
@@ -33,12 +31,10 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  // ================= POST (Update Playlists) =================
   if (req.method === 'POST') {
     try {
       const { action, playlistId, data } = req.body;
       
-      // Fetch current data
       const gistRes = await fetch(GIST_API_URL, { headers: { 'Authorization': `token ${GIST_TOKEN}` } });
       const gistData = await gistRes.json();
       const doc = JSON.parse(gistData.files[FILENAME].content);
@@ -68,7 +64,6 @@ module.exports = async function handler(req, res) {
 
       doc.lastUpdated = Date.now();
 
-      // Patch Gist
       const patchRes = await fetch(GIST_API_URL, {
         method: 'PATCH',
         headers: { 'Authorization': `token ${GIST_TOKEN}`, 'Content-Type': 'application/json' },
@@ -79,9 +74,8 @@ module.exports = async function handler(req, res) {
       
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       return res.status(200).json({ success: true, lastUpdated: doc.lastUpdated });
-    } catch (e) {
-      console.error('Playlist API Error:', e);
-      return res.status(500).json({ error: e.message });
+    } catch (error) {
+      return res.status(500).json({ error: 'Gagal update playlist: ' + error.message });
     }
   }
 

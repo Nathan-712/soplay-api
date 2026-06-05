@@ -2,6 +2,7 @@
 const { put } = require('@vercel/blob');
 
 module.exports = async function handler(req, res) {
+  // ✅ CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -9,17 +10,18 @@ module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
+    // 🔧 Manual Multipart Parsing (Stabil di Node.js)
     const chunks = [];
     for await (const chunk of req) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
     const buffer = Buffer.concat(chunks);
-    
+
     const contentType = req.headers['content-type'] || '';
     const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
     if (!boundaryMatch) return res.status(400).json({ error: 'Boundary tidak ditemukan' });
-    
+
     const boundary = boundaryMatch[1] || boundaryMatch[2];
     const boundaryBuffer = Buffer.from(`--${boundary}`);
-    
+
     const parts = [];
     let start = 0;
     while (true) {
@@ -47,8 +49,11 @@ module.exports = async function handler(req, res) {
 
     if (!fileBuffer || fileBuffer.length === 0) return res.status(400).json({ error: 'File tidak ditemukan' });
 
+    // 📦 Upload ke Vercel Blob
     const blob = await put(`soplay/${Date.now()}-${fileName}`, fileBuffer, {
-      access: 'public', contentType: mimeType, addRandomSuffix: true
+      access: 'public',
+      contentType: mimeType,
+      addRandomSuffix: true // Audio file dapat suffix acak agar tidak bentrok
     });
 
     return res.status(200).json({

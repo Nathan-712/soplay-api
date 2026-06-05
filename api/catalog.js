@@ -1,5 +1,5 @@
 // api/catalog.js
-const GIST_ID = '63104bfd16a026c85a363c0d4f517a2a'; // Contoh: 'abcdef1234567890'
+const GIST_ID = '63104bfd16a026c85a363c0d4f517a2a'; // Gist ID kamu
 const GIST_TOKEN = process.env.GIST_TOKEN; // Diset di Vercel Environment Variables
 
 if (!GIST_TOKEN) {
@@ -14,7 +14,7 @@ module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   
-  // Cache Control untuk CDN GitHub
+  // Cache Control untuk CDN GitHub & Vercel Edge
   res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
   
   if (req.method === 'OPTIONS') return res.status(204).end();
@@ -27,7 +27,6 @@ module.exports = async function handler(req, res) {
         'If-None-Match': req.headers['if-none-match'] || ''
       };
       
-      // Tambahkan Authorization jika tersedia
       if (GIST_TOKEN) {
         headers['Authorization'] = `token ${GIST_TOKEN}`;
       }
@@ -61,14 +60,12 @@ module.exports = async function handler(req, res) {
       return res.status(200).json(catalog);
     } catch (e) {
       console.error('Gist GET error:', e);
-      // Return empty catalog sebagai fallback
       return res.status(200).json({ songs: [], lastUpdated: 0 });
     }
   }
 
   // ================= POST: Update Katalog ke Gist =================
   if (req.method === 'POST') {
-    // Pastikan GIST_TOKEN tersedia untuk write operation
     if (!GIST_TOKEN) {
       return res.status(500).json({ error: 'GIST_TOKEN tidak tersedia untuk update' });
     }

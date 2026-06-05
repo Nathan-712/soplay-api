@@ -1,5 +1,5 @@
 // api/catalog.js
-const GIST_ID = 'GANTI_DENGAN_GIST_ID_KAMU'; // Contoh: 'abcdef1234567890'
+const GIST_ID = '63104bfd16a026c85a363c0d4f517a2a'; // Contoh: 'abcdef1234567890'
 const GIST_TOKEN = process.env.GIST_TOKEN; // Diset di Vercel Environment Variables
 
 if (!GIST_TOKEN) {

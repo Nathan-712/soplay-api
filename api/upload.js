@@ -1,71 +1,67 @@
 // api/upload.js
-import { handleUpload } from '@vercel/blob/client';
+const { put } = require('@vercel/blob');
 
-export const config = {
-  api: {
-    bodyParser: false, // Penting: biarkan SDK handle body parsing
-  },
-};
+module.exports = async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-export default async function handler(request, response) {
   try {
-    const jsonResponse = await handleUpload({
-      body: request.body,
-      request,
-      
-      // 1. Sebelum generate token (validasi & auth)
-      onBeforeGenerateToken: async (pathname, clientPayload) => {
-        console.log('🔐 Token request for:', pathname);
-        
-        // 🔒 TODO: Tambahkan autentikasi di sini untuk produksi
-        // const session = await getSession(request);
-        // if (!session) throw new Error('Unauthorized');
-        
-        return {
-          // Hanya izinkan file audio/video
-          allowedContentTypes: [
-            'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/aac', 'audio/x-m4a',
-            'video/mp4', 'video/webm', 'video/quicktime'
-          ],
-          
-          // Tambahkan suffix random agar filename unik
-          addRandomSuffix: true,
-          
-          // Payload yang akan dikembalikan saat upload selesai
-          tokenPayload: JSON.stringify({
-            uploadedAt: new Date().toISOString(),
-            originalName: pathname,
-            // userId: session?.user?.id // Simpan jika ada auth
-          }),
-          
-          // Batas ukuran 10 MB (validasi tambahan di server)
-          maximumSizeInBytes: 10 * 1024 * 1024,
-        };
-      },
-      
-      // 2. Setelah upload selesai (webhook callback)
-      onUploadCompleted: async ({ blob, tokenPayload }) => {
-        console.log('✅ Upload completed:', blob.url);
-        console.log('Size:', blob.size, 'bytes');
-        
-        try {
-          // TODO: Simpan metadata ke database eksternal jika perlu
-          // Contoh: await db.save({ url: blob.url, size: blob.size, ...JSON.parse(tokenPayload) });
-          
-          console.log('📦 Metadata saved for:', blob.url);
-        } catch (error) {
-          // Upload sudah sukses di Blob, error hanya di side-effect
-          console.error('❌ Failed to save metadata:', error);
-        }
-      },
+    const chunks = [];
+    for await (const chunk of req) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    const buffer = Buffer.concat(chunks);
+    
+    const contentType = req.headers['content-type'] || '';
+    const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+    if (!boundaryMatch) return res.status(400).json({ error: 'Boundary tidak ditemukan' });
+    
+    const boundary = boundaryMatch[1] || boundaryMatch[2];
+    const boundaryBuffer = Buffer.from(`--${boundary}`);
+    
+    const parts = [];
+    let start = 0;
+    while (true) {
+      const idx = buffer.indexOf(boundaryBuffer, start);
+      if (idx === -1) break;
+      if (idx > start) parts.push(buffer.slice(start, idx));
+      start = idx + boundaryBuffer.length + 2;
+    }
+
+    let fileBuffer = null, fileName = 'unknown.mp3', mimeType = 'audio/mpeg';
+    for (const part of parts) {
+      const headerEndIdx = part.indexOf(Buffer.from('\r\n\r\n'));
+      if (headerEndIdx === -1) continue;
+      const headerStr = part.slice(0, headerEndIdx).toString('utf-8');
+      if (headerStr.includes('filename="')) {
+        const fn = headerStr.match(/filename="([^"]+)"/);
+        if (fn) fileName = fn[1];
+        const ct = headerStr.match(/Content-Type:\s*([^\r\n]+)/i);
+        if (ct) mimeType = ct[1].trim();
+        let body = part.slice(headerEndIdx + 4);
+        if (body.length >= 2 && body[body.length-2] === 13 && body[body.length-1] === 10) body = body.slice(0, -2);
+        fileBuffer = body;
+      }
+    }
+
+    if (!fileBuffer || fileBuffer.length === 0) return res.status(400).json({ error: 'File tidak ditemukan' });
+
+    const blob = await put(`soplay/${Date.now()}-${fileName}`, fileBuffer, {
+      access: 'public', contentType: mimeType, addRandomSuffix: true
     });
 
-    return response.status(200).json(jsonResponse);
-    
+    return res.status(200).json({
+      success: true,
+      url: blob.url,
+      title: fileName.replace(/\.[^/.]+$/, ''),
+      artist: 'Unknown Artist',
+      album: '-',
+      size: fileBuffer.length,
+      mimeType
+    });
   } catch (error) {
-    console.error('❌ Upload handler error:', error);
-    const message = error instanceof Error ? error.message : 'Upload failed';
-    
-    return response.status(400).json({ error: message });
+    console.error('Upload Error:', error);
+    return res.status(500).json({ error: 'Gagal upload: ' + error.message });
   }
-}
+};

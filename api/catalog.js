@@ -4,6 +4,7 @@ const GIST_TOKEN = process.env.GIST_TOKEN;
 const GIST_API_URL = `https://api.github.com/gists/${GIST_ID}`;
 
 module.exports = async function handler(req, res) {
+  // CORS Headers untuk mengizinkan akses dari browser
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -30,6 +31,7 @@ module.exports = async function handler(req, res) {
       
       return res.status(200).json(JSON.parse(catalogContent));
     } catch (e) {
+      // Jika Gist kosong/error, kembalikan struktur kosong agar frontend tidak crash
       return res.status(200).json({ songs: [], lastUpdated: 0 });
     }
   }
@@ -39,10 +41,14 @@ module.exports = async function handler(req, res) {
     if (!GIST_TOKEN) return res.status(500).json({ error: 'GIST_TOKEN tidak tersedia' });
 
     try {
-      // Menangkap lrcUrl dari body request frontend
+      // Tangkap data dari request frontend (termasuk lrcUrl)
       const { title, artist, album, url, lrcUrl, size, mimeType, img, duration } = req.body;
-      if (!title || !url) return res.status(400).json({ error: 'Title dan URL wajib' });
+      
+      if (!title || !url) {
+        return res.status(400).json({ error: 'Title dan URL wajib diisi' });
+      }
 
+      // 1. Fetch data Gist saat ini
       const resGist = await fetch(GIST_API_URL, {
         headers: { 'User-Agent': 'Soplay-Catalog/1.0', 'Authorization': `token ${GIST_TOKEN}` }
       });
@@ -50,21 +56,29 @@ module.exports = async function handler(req, res) {
       
       const gistData = await resGist.json();
       const catalogContent = gistData.files?.['soplay-catalog.json']?.content;
+      
       let catalog = { songs: [], lastUpdated: 0 };
-      if (catalogContent) catalog = JSON.parse(catalogContent);
-
-      if (catalog.songs.some(s => s.url === url)) {
-        return res.status(200).json({ success: true, message: 'Sudah ada di katalog' });
+      if (catalogContent) {
+        try {
+          catalog = JSON.parse(catalogContent);
+        } catch (parseErr) {
+          console.warn('Gist content corrupt, resetting catalog');
+        }
       }
 
-      // Memasukkan data lagu baru lengkap dengan lrcUrl
+      // 2. Cek duplikasi berdasarkan URL
+      if (catalog.songs.some(s => s.url === url)) {
+        return res.status(200).json({ success: true, message: 'Lagu sudah ada di katalog' });
+      }
+
+      // 3. Tambah lagu baru ke array
       catalog.songs.push({
         id: `pub_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
         title, 
         artist: artist || 'Unknown Artist', 
         album: album || '-',
         url, 
-        lrcUrl: lrcUrl || null, // URL lirik disimpan di sini
+        lrcUrl: lrcUrl || null, // ← URL lirik disimpan di sini
         size: size || 0, 
         mimeType: mimeType || 'audio/mpeg',
         img: img || '', 
@@ -74,6 +88,7 @@ module.exports = async function handler(req, res) {
 
       catalog.lastUpdated = Date.now();
 
+      // 4. Update Gist via PATCH
       const updateRes = await fetch(GIST_API_URL, {
         method: 'PATCH',
         headers: {
@@ -89,10 +104,17 @@ module.exports = async function handler(req, res) {
       if (!updateRes.ok) throw new Error('Gagal update Gist via PATCH');
 
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      return res.status(200).json({ success: true, total: catalog.songs.length, lastUpdated: catalog.lastUpdated });
+      return res.status(200).json({ 
+        success: true, 
+        total: catalog.songs.length, 
+        lastUpdated: catalog.lastUpdated 
+      });
+      
     } catch (error) {
+      console.error('Catalog Update Error:', error);
       return res.status(500).json({ error: 'Gagal update katalog: ' + error.message });
     }
   }
+  
   return res.status(405).json({ error: 'Method not allowed' });
 };

@@ -1,8 +1,19 @@
 {
+  "name": "soplay-api",
+  "version": "1.0.0",
+  "description": "Soplay Music Player API - Catalog & Upload",
+  "main": "api/catalog.js",
+  "engines": {
+    "node": "20.x"
+  },
   "dependencies": {
     "@vercel/blob": "^0.23.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0"
-  }
+  },
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "private": true
 }

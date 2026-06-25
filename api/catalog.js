@@ -1,5 +1,4 @@
-// api/catalog.js
-const GIST_ID = '63104bfd16a026c85a363c0d4f517a2a'; 
+const GIST_ID = process.env.GIST_ID; 
 const GIST_TOKEN = process.env.GIST_TOKEN; 
 const GIST_API_URL = `https://api.github.com/gists/${GIST_ID}`;
 

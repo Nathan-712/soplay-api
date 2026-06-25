@@ -1,7 +1,6 @@
 {
   "dependencies": {
     "@vercel/blob": "^0.23.0"
-    "node": "24.x"
   },
   "devDependencies": {
     "@types/node": "^20.0.0"

@@ -1,0 +1,4 @@
+// 🔑 FIX: Otomatis mengikuti domain deploy (Vercel/Local)
+const VERCEL_API_URL = window.location.origin || '';
+const CATALOG_API_URL = `${VERCEL_API_URL}/api/catalog`;
+const UPLOAD_API_URL = `${VERCEL_API_URL}/api/upload`;

@@ -1,69 +1,137 @@
+// /api/catalog.js
 const GIST_ID = process.env.GIST_ID;
 const GIST_TOKEN = process.env.GIST_TOKEN;
-const GIST_URL = `https://api.github.com/gists/${GIST_ID}`;
+const GIST_API_URL = `https://api.github.com/gists/${GIST_ID}`;
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
+  // ─── CORS & Cache Headers ──────────────────────────────
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+
   if (req.method === 'OPTIONS') return res.status(204).end();
 
+  // ─── GET: Fetch Catalog from Gist ──────────────────────
   if (req.method === 'GET') {
     try {
-      const headers = { 'User-Agent': 'Soplay/1.3.8' };
-      if (req.headers['if-none-match']) headers['If-None-Match'] = req.headers['if-none-match'];
-      if (GIST_TOKEN) headers.Authorization = `Bearer ${GIST_TOKEN}`;
+      const headers = { 
+        'User-Agent': 'Soplay-Catalog/1.0', 
+        'If-None-Match': req.headers['if-none-match'] || '' 
+      };
+      if (GIST_TOKEN) headers['Authorization'] = `token ${GIST_TOKEN}`;
 
-      const r = await fetch(GIST_URL, { headers });
-      if (r.status === 304) return res.status(304).end();
-      if (!r.ok) throw new Error(`Gist error: ${r.status}`);
-
-      const data = await r.json();
-      const content = data.files?.['soplay-catalog.json']?.content;
-      const etag = r.headers.get('ETag');
+      const resGist = await fetch(GIST_API_URL, { headers });
+      
+      // Return 304 if not modified (ETag cache)
+      if (resGist.status === 304) return res.status(304).end();
+      if (!resGist.ok) throw new Error(`Gist API error: ${resGist.status}`);
+      
+      const data = await resGist.json();
+      const catalogContent = data.files?.['soplay-catalog.json']?.content;
+      
+      if (!catalogContent) {
+        return res.status(200).json({ songs: [], lastUpdated: 0 });
+      }
+      
+      // Set ETag for conditional requests
+      const etag = resGist.headers.get('ETag');
       if (etag) res.setHeader('ETag', etag);
-
-      return res.status(200).json(content ? JSON.parse(content) : { songs: [], lastUpdated: 0 });
+      
+      return res.status(200).json(JSON.parse(catalogContent));
+      
     } catch (e) {
-      return res.status(200).json({ songs: [], lastUpdated: 0, error: e.message });
+      console.error('Catalog GET Error:', e);
+      // Fallback: return empty structure to prevent frontend crash
+      return res.status(200).json({ songs: [], lastUpdated: 0 });
     }
   }
 
+  // ─── POST: Add Song to Catalog ─────────────────────────
   if (req.method === 'POST') {
-    if (!GIST_TOKEN) return res.status(500).json({ error: 'GIST_TOKEN tidak diset' });
+    if (!GIST_TOKEN) {
+      return res.status(500).json({ error: 'GIST_TOKEN not configured' });
+    }
+
     try {
       const { title, artist, album, url, lrcUrl, size, mimeType, img, duration } = req.body;
-      if (!title || !url) return res.status(400).json({ error: 'Title & URL wajib' });
-
-      const r = await fetch(GIST_URL, { headers: { 'Authorization': `Bearer ${GIST_TOKEN}` } });
-      const data = await r.json();
-      const content = data.files?.['soplay-catalog.json']?.content;
-      let catalog = content ? JSON.parse(content) : { songs: [], lastUpdated: 0 };
-
-      if (catalog.songs.some(s => s.url === url)) {
-        return res.status(200).json({ success: true, message: 'Sudah ada' });
+      
+      if (!title || !url) {
+        return res.status(400).json({ error: 'Title and URL are required' });
       }
 
-      catalog.songs.push({
-        id: `pub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        title, artist: artist || 'Unknown', album: album || '-',
-        url, lrcUrl: lrcUrl || null, size, mimeType: mimeType || 'audio/mpeg',
-        img, duration, addedAt: Date.now()
+      // 1. Fetch current Gist data
+      const resGist = await fetch(GIST_API_URL, {
+        headers: { 
+          'User-Agent': 'Soplay-Catalog/1.0', 
+          'Authorization': `token ${GIST_TOKEN}` 
+        }
       });
+      if (!resGist.ok) throw new Error('Failed to fetch Gist');
+      
+      const gistData = await resGist.json();
+      const catalogContent = gistData.files?.['soplay-catalog.json']?.content;
+      
+      // Parse existing catalog or init empty
+      let catalog = { songs: [], lastUpdated: 0 };
+      if (catalogContent) {
+        try { catalog = JSON.parse(catalogContent); } 
+        catch { console.warn('Catalog parse error, resetting'); }
+      }
+
+      // 2. Prevent duplicates by URL
+      if (catalog.songs.some(s => s.url === url)) {
+        return res.status(200).json({ success: true, message: 'Song already exists' });
+      }
+
+      // 3. Add new song entry
+      catalog.songs.push({
+        id: `pub_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        title,
+        artist: artist || 'Unknown Artist',
+        album: album || '-',
+        url,
+        lrcUrl: lrcUrl || null,  // ← Lirik URL disimpan di sini
+        size: size || 0,
+        mimeType: mimeType || 'audio/mpeg',
+        img: img || '',
+        duration: duration || 0,
+        addedAt: Date.now()
+      });
+
       catalog.lastUpdated = Date.now();
 
-      const patch = await fetch(GIST_URL, {
+      // 4. Update Gist via PATCH
+      const updateRes = await fetch(GIST_API_URL, {
         method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${GIST_TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: { 'soplay-catalog.json': { content: JSON.stringify(catalog, null, 2) } } })
+        headers: {
+          'User-Agent': 'Soplay-Catalog/1.0',
+          'Authorization': `token ${GIST_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          files: { 
+            'soplay-catalog.json': { 
+              content: JSON.stringify(catalog, null, 2) 
+            } 
+          }
+        })
       });
-      if (!patch.ok) throw new Error('Gagal update Gist');
 
-      return res.status(200).json({ success: true, total: catalog.songs.length });
-    } catch (e) {
-      return res.status(500).json({ error: e.message });
+      if (!updateRes.ok) throw new Error('Failed to update Gist');
+
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      return res.status(200).json({ 
+        success: true, 
+        total: catalog.songs.length, 
+        lastUpdated: catalog.lastUpdated 
+      });
+      
+    } catch (error) {
+      console.error('Catalog POST Error:', error);
+      return res.status(500).json({ error: 'Catalog update failed: ' + error.message });
     }
   }
 
-  res.status(405).json({ error: 'Method not allowed' });
-}
+  return res.status(405).json({ error: 'Method not allowed' });
+};
